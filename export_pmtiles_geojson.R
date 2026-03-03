@@ -4,7 +4,7 @@
 # 2. Computes the top 3 POSITIVE and NEGATIVE contributors to the building's ACI.
 # 3. Exports the spatial data to GeoJSON for tippecanoe (MapLibre PMTiles).
 # 4. Exports the summary data directly to Supabase.
-source(file.path(dirname(rstudioapi::getActiveDocumentContext()$path), "utils.R"))
+source("utils.R")
 library(tidyverse)
 library(data.table)
 library(sf)
@@ -17,7 +17,7 @@ ACI_SCORES_CSV <- "ACI_all_rolling.csv"
 TCI_SCORES_CSV <- "TCI_all_rolling.csv"
 RAW_AMENITY_COUNTS_CSV <- "codeact_per_bat_cleaned.csv"
 
-OUTPUT_GEOJSON <- "paris_buildings_aci.geojson"
+OUTPUT_GEOJSON <- "paris_buildings_aci_v2.geojson"
 
 
 aci_data <- fread(proj_path(ACI_SCORES_CSV))
@@ -85,17 +85,30 @@ final_contributors2 <- final_contributors %>%
 
 map_data <- aci_data %>% 
   rename(aci = Complexity) %>%
-  select(id, Year, aci, diversity, ubiquity) %>%
-  pivot_wider(., names_from = Year, names_prefix = "Year", values_from = c(3:5))
+  select(id, Year, aci, diversity, ubiquity, rank) %>%
+  pivot_wider(., names_from = Year, names_prefix = "Year", values_from = c(aci, diversity, ubiquity, rank))
+
+# Calculate absolute growth for available intervals
+years <- c("2014", "2017", "2020", "2023")
+for (i in 1:(length(years)-1)) {
+  for (j in (i+1):length(years)) {
+    base <- years[i]
+    end <- years[j]
+    col_name <- paste0("aci_growth_", substr(base, 3, 4), substr(end, 3, 4))
+    map_data[[col_name]] <- map_data[[paste0("aci_Year", end)]] - map_data[[paste0("aci_Year", base)]]
+  }
+}
 
 
 map_data <- inner_join(map_data, final_contributors2, by = "id")
+
+map_data <- map_data %>% mutate(across(where(is.numeric), ~ round(., 5)))
 
 map_data <- inner_join(map_data, raw_counts %>% select(id,lon,lat) %>% distinct(), by = "id")
 
 map_sf <- st_as_sf(map_data, crs = 4326, coords = c("lon","lat"))
 
-st_write(map_sf, OUTPUT_GEOJSON)
+st_write(map_sf, proj_path(OUTPUT_GEOJSON))
 
 
 # --- 3. Join with Geometries ---
@@ -108,6 +121,8 @@ st_write(map_sf, OUTPUT_GEOJSON)
 # cat("Exporting to GeoJSON for tippecanoe...\n")
 # st_write(final_sf, OUTPUT_GEOJSON, delete_dsn = TRUE)
 # system(sprintf("tippecanoe -o paris_aci.pmtiles -zg --drop-densest-as-needed %s", OUTPUT_GEOJSON))
+
+# tippecanoe -o /mnt/e/ACI_app/ACI_Paris/paris_buildings_aci.pmtiles   --project=EPSG:4326  --drop-densest-as-needed -Z 7 -zg --smallest-maximum-zoom-guess=14 -kg -rp -l points_layer /mnt/e/ACI_app/ACI_Paris/paris_buildings_aci.geojson
 
 # cat("Exporting summary data to Supabase...\n")
 # supabase_data <- final_sf %>% st_drop_geometry()
