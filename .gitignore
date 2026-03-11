@@ -2,3 +2,5 @@
 .env
 *.geojson
 *.pmtiles
+
+*.Rhistory
